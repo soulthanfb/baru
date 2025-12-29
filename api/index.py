@@ -9,7 +9,7 @@ SUPABASE_URL = "https://lmcxzdumzyvgobjpqopr.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxtY3h6ZHVtenl2Z29ianBxb3ByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU5NTM0MjIsImV4cCI6MjA4MTUyOTQyMn0.9F3aqni686QeiLE3z3NtpOBfyIkLVjI93gaA3ejYwOw" 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# --- TEMPLATE 1: DASHBOARD UTAMA (Form & Tabel) ---
+# --- TEMPLATE 1: DASHBOARD UTAMA (DENGAN ANIMASI WIFI) ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="id">
@@ -31,7 +31,47 @@ HTML_TEMPLATE = """
             color: #444;
         }
 
-        /* Container Styles */
+        /* --- NOTIFIKASI WIFI (ANIMASI) --- */
+        .wifi-toast {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%) translateY(-100px); /* Mulai dari atas layar (tersembunyi) */
+            background: white;
+            padding: 12px 25px;
+            border-radius: 50px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            z-index: 1000;
+            transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.5s;
+            font-weight: 600;
+            font-size: 14px;
+            opacity: 0;
+        }
+        
+        .wifi-toast.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+
+        .wifi-toast.hidden {
+            transform: translateX(-50%) translateY(-100px);
+            opacity: 0;
+        }
+
+        /* Ikon WiFi */
+        .wifi-icon { font-size: 18px; }
+        
+        .status-connecting { color: #f39c12; }
+        .status-connected { color: #2ecc71; }
+        
+        .spin { animation: spin 1s linear infinite; display: inline-block; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+
+
+        /* --- CONTAINER UTAMA --- */
         .main-container {
             background: rgba(255, 255, 255, 0.95);
             padding: 40px;
@@ -42,6 +82,7 @@ HTML_TEMPLATE = """
             display: grid;
             grid-template-columns: 1fr;
             gap: 40px;
+            margin-top: 20px; /* Beri jarak untuk notifikasi wifi */
         }
 
         h2 { margin: 0 0 20px 0; color: #333; font-weight: 600; text-align: center; }
@@ -107,11 +148,10 @@ HTML_TEMPLATE = """
         .bg-red { background-color: #ff3d00; box-shadow: 0 2px 5px rgba(255,61,0,0.2); }
         
         .loading { text-align: center; color: #999; font-style: italic; padding: 20px; }
-        .uid-mono { font-family: 'Courier New', monospace; font-weight: bold; color: #333; background: #f5f5f5; padding: 2px 6px; border-radius: 4px; }
 
         @keyframes pulse { 0% { opacity: 0.8; } 50% { opacity: 1; } 100% { opacity: 0.8; } }
 
-        /* Responsive Layout for Desktop */
+        /* Responsive Layout */
         @media (min-width: 768px) {
             .main-container { grid-template-columns: 1fr 1.5fr; align-items: start; }
             .form-section { border-bottom: none; border-right: 2px dashed #e0e0e0; padding-bottom: 0; padding-right: 30px; margin-bottom: 0; }
@@ -120,6 +160,11 @@ HTML_TEMPLATE = """
     </style>
 </head>
 <body>
+
+    <div id="wifiToast" class="wifi-toast">
+        <span id="wifiIcon" class="wifi-icon spin">🔄</span>
+        <span id="wifiText" class="status-connecting">Menghubungkan WiFi...</span>
+    </div>
 
     <div class="main-container">
         <div class="form-section">
@@ -159,6 +204,32 @@ HTML_TEMPLATE = """
     </div>
 
     <script>
+        // --- ANIMASI KONEKSI WIFI ---
+        window.addEventListener('load', function() {
+            const toast = document.getElementById('wifiToast');
+            const icon = document.getElementById('wifiIcon');
+            const text = document.getElementById('wifiText');
+
+            // 1. Munculkan Toast (Loading)
+            setTimeout(() => {
+                toast.classList.add('show');
+            }, 500); // Muncul setengah detik setelah buka web
+
+            // 2. Ubah jadi Terhubung setelah 2.5 detik
+            setTimeout(() => {
+                icon.classList.remove('spin');
+                icon.innerHTML = '✅'; // Ganti ikon loading jadi centang
+                text.innerHTML = 'WiFi Terhubung!';
+                text.className = 'status-connected';
+            }, 3000);
+
+            // 3. Hilangkan Notifikasi setelah 6 detik
+            setTimeout(() => {
+                toast.classList.remove('show');
+                toast.classList.add('hidden');
+            }, 6000);
+        });
+
         // 1. Script Auto-Fill UID dari Alat
         async function checkLatestScan() {
             try {
@@ -195,10 +266,8 @@ HTML_TEMPLATE = """
 
                 let htmlContent = '';
                 logs.forEach(log => {
-                    let cleanTime = log.waktu.replace('T', ' ').substring(0, 19); // Ambil YYYY-MM-DD HH:MM:SS
+                    let cleanTime = log.waktu.replace('T', ' ').substring(0, 19); 
                     let badgeClass = (log.status === 'Masuk') ? 'bg-green' : 'bg-red';
-                    
-                    // Format tampilan nama & UID
                     let userInfo = `<b>${log.nama}</b>`;
                     
                     htmlContent += `
@@ -216,8 +285,8 @@ HTML_TEMPLATE = """
             } catch (error) { console.error("Error logs:", error); }
         }
 
-        setInterval(checkLatestScan, 1500); // Cek scan lebih responsif
-        setInterval(refreshLogs, 2000);     // Refresh tabel tiap 2 detik
+        setInterval(checkLatestScan, 1500); 
+        setInterval(refreshLogs, 2000);     
         refreshLogs();
     </script>
 
@@ -225,7 +294,7 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# --- TEMPLATE 2: HALAMAN SUKSES (TAMPILAN BARU) ---
+# --- TEMPLATE 2: HALAMAN SUKSES ---
 SUCCESS_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="id">
@@ -311,7 +380,6 @@ SUCCESS_TEMPLATE = """
 def home():
     return render_template_string(HTML_TEMPLATE)
 
-# API: Ambil Log (JSON)
 @app.route('/api/get-logs', methods=['GET'])
 def api_get_logs():
     try:
@@ -320,7 +388,6 @@ def api_get_logs():
     except Exception as e:
         return jsonify([])
 
-# API: Proses Register (Update: Mereturn Tampilan Sukses Bagus)
 @app.route('/api/register', methods=['POST'])
 def register_card():
     uid = request.form.get('uid').upper()
@@ -329,12 +396,10 @@ def register_card():
     data = {"uid": uid, "nama": nama}
     try:
         supabase.table("users").upsert(data).execute()
-        # Render template sukses yang baru, bukan alert JS biasa
         return render_template_string(SUCCESS_TEMPLATE, nama=nama, uid=uid)
     except Exception as e:
         return f"Error: {str(e)}"
 
-# API: Ambil Scan Terakhir (Untuk Auto-fill)
 @app.route('/api/last-scan', methods=['GET'])
 def get_last_scan():
     scan = supabase.table("temp_scan").select("*").eq("id", 1).execute()
@@ -342,7 +407,6 @@ def get_last_scan():
         return jsonify(scan.data[0])
     return jsonify({"uid": "BELUM ADA"})
 
-# API: Untuk Hardware Wemos
 @app.route('/api/akses', methods=['POST'])
 def cek_akses():
     data = request.json
