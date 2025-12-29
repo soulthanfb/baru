@@ -5,12 +5,11 @@ import datetime
 app = Flask(__name__)
 
 # --- KONFIGURASI SUPABASE ---
-# HARAP DIGANTI JIKA DI-DEPLOY KE PUBLIK (Saat ini terekspos)
 SUPABASE_URL = "https://lmcxzdumzyvgobjpqopr.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxtY3h6ZHVtenl2Z29ianBxb3ByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU5NTM0MjIsImV4cCI6MjA4MTUyOTQyMn0.9F3aqni686QeiLE3z3NtpOBfyIkLVjI93gaA3ejYwOw" 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# --- TEMPLATE HTML (FRONTEND) ---
+# --- TEMPLATE 1: HALAMAN UTAMA (DASHBOARD) ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="id">
@@ -23,14 +22,12 @@ HTML_TEMPLATE = """
         .container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 500px; margin-bottom: 20px; }
         h2 { text-align: center; color: #333; margin-bottom: 20px; }
         
-        /* Form Styles */
         label { font-weight: bold; color: #555; display: block; margin-top: 15px; }
         input[type="text"] { width: 100%; padding: 12px; margin-top: 5px; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
         input[type="text"]:focus { border-color: #28a745; outline: none; }
         button { width: 100%; padding: 12px; background-color: #28a745; color: white; border: none; border-radius: 6px; font-size: 16px; margin-top: 20px; cursor: pointer; transition: background 0.3s; }
         button:hover { background-color: #218838; }
         
-        /* Table Styles */
         .table-container { width: 100%; max-width: 800px; overflow-x: auto; }
         table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
         th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #eee; }
@@ -48,18 +45,12 @@ HTML_TEMPLATE = """
 
     <div class="container">
         <h2>Daftar Kartu Baru</h2>
-        
-        <div class="status-box">
-            Tempelkan kartu ke alat, UID akan muncul otomatis di bawah ini.
-        </div>
-
+        <div class="status-box">Tempelkan kartu ke alat, UID akan muncul otomatis di bawah ini.</div>
         <form action="/api/register" method="POST">
             <label>UID Kartu</label>
             <input type="text" id="uidField" name="uid" placeholder="Menunggu scan..." required readonly>
-            
             <label>Nama Pemilik</label>
             <input type="text" name="nama" placeholder="Masukkan Nama Anda" required>
-            
             <button type="submit">Simpan Kartu</button>
         </form>
     </div>
@@ -68,12 +59,7 @@ HTML_TEMPLATE = """
         <h2 style="margin-top: 30px;">Riwayat Akses (Real-time)</h2>
         <table>
             <thead>
-                <tr>
-                    <th>Waktu</th>
-                    <th>Nama</th>
-                    <th>UID</th>
-                    <th>Status</th>
-                </tr>
+                <tr><th>Waktu</th><th>Nama</th><th>UID</th><th>Status</th></tr>
             </thead>
             <tbody id="logTableBody">
                 <tr><td colspan="4" class="loading">Memuat data...</td></tr>
@@ -82,14 +68,11 @@ HTML_TEMPLATE = """
     </div>
 
     <script>
-        // --- 1. FUNGSI AUTO-FILL UID (Registrasi) ---
         async function checkLatestScan() {
             try {
                 const response = await fetch('/api/last-scan');
                 const data = await response.json();
-                
                 const inputField = document.getElementById('uidField');
-                
                 if (data.uid && data.uid !== "BELUM ADA") {
                     if(inputField.value !== data.uid) {
                         inputField.value = data.uid;
@@ -97,65 +80,138 @@ HTML_TEMPLATE = """
                         setTimeout(() => { inputField.style.backgroundColor = "white"; }, 500);
                     }
                 }
-            } catch (error) {
-                console.error("Gagal mengambil scan:", error);
-            }
+            } catch (error) { console.error("Gagal mengambil scan:", error); }
         }
 
-        // --- 2. FUNGSI AUTO-REFRESH TABEL LOGS ---
         async function refreshLogs() {
             try {
-                // Panggil API baru khusus JSON
                 const response = await fetch('/api/get-logs'); 
                 const logs = await response.json();
-                
                 const tableBody = document.getElementById('logTableBody');
                 
-                // Jika data kosong
                 if (logs.length === 0) {
                     tableBody.innerHTML = '<tr><td colspan="4" class="loading">Belum ada riwayat akses</td></tr>';
                     return;
                 }
 
-                // Bangun HTML baris tabel
                 let htmlContent = '';
                 logs.forEach(log => {
-                    // Format waktu agar rapi (buang huruf T)
                     let cleanTime = log.waktu.replace('T', ' ').substring(0, 19);
-                    
-                    // Tentukan warna badge
                     let badgeClass = (log.status === 'Masuk') ? 'bg-green' : 'bg-red';
-                    
                     htmlContent += `
                         <tr>
                             <td>${cleanTime}</td>
                             <td><b>${log.nama}</b></td>
                             <td><code>${log.uid}</code></td>
-                            <td>
-                                <span class="badge ${badgeClass}">
-                                    ${log.status}
-                                </span>
-                            </td>
-                        </tr>
-                    `;
+                            <td><span class="badge ${badgeClass}">${log.status}</span></td>
+                        </tr>`;
                 });
-
-                // Update isi tabel
                 tableBody.innerHTML = htmlContent;
-
-            } catch (error) {
-                console.error("Gagal refresh logs:", error);
-            }
+            } catch (error) { console.error("Gagal refresh logs:", error); }
         }
 
-        // Jalankan interval
-        setInterval(checkLatestScan, 2000); // Cek UID tiap 2 detik
-        setInterval(refreshLogs, 2000);     // Refresh tabel tiap 2 detik
-        
-        // Panggil sekali saat halaman pertama dimuat
+        setInterval(checkLatestScan, 2000);
+        setInterval(refreshLogs, 2000);
         refreshLogs();
     </script>
+</body>
+</html>
+"""
 
+# --- TEMPLATE 2: HALAMAN SUKSES (DESAIN BARU) ---
+SUCCESS_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Berhasil</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #d4fc79 0%, #96e6a1 100%);
+            height: 100vh;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .card {
+            background: white;
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            text-align: center;
+            width: 90%;
+            max-width: 400px;
+            animation: popIn 0.5s ease;
+        }
+        .icon-container {
+            width: 80px;
+            height: 80px;
+            background-color: #e8f5e9;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px auto;
+        }
+        .checkmark {
+            color: #4CAF50;
+            font-size: 40px;
+            font-weight: bold;
+        }
+        h1 {
+            color: #333;
+            margin: 10px 0;
+            font-size: 24px;
+        }
+        p {
+            color: #666;
+            line-height: 1.5;
+            margin-bottom: 30px;
+        }
+        .btn {
+            background: linear-gradient(to right, #56ab2f, #a8e063);
+            color: white;
+            border: none;
+            padding: 12px 40px;
+            border-radius: 50px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
+            transition: transform 0.2s;
+        }
+        .btn:hover {
+            transform: scale(1.05);
+        }
+        
+        @keyframes popIn {
+            0% { transform: scale(0.8); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon-container">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#4CAF50" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+        </div>
+        
+        <h1>Pendaftaran Berhasil!</h1>
+        <p>
+            Sukses! Kartu <b>{{ nama }}</b><br>
+            (UID: {{ uid }})<br>
+            berhasil didaftarkan ke sistem.
+        </p>
+        
+        <a href="/" class="btn">OK</a>
+    </div>
 </body>
 </html>
 """
@@ -164,19 +220,17 @@ HTML_TEMPLATE = """
 
 @app.route('/')
 def home():
-    # Tidak perlu passing data logs di sini lagi, karena akan diambil via JS
     return render_template_string(HTML_TEMPLATE)
 
-# [BARU] Endpoint khusus untuk memberikan data Logs dalam bentuk JSON ke JavaScript
 @app.route('/api/get-logs', methods=['GET'])
 def api_get_logs():
     try:
-        # Ambil 10 log terakhir
         logs = supabase.table("logs").select("*").order("id", desc=True).limit(10).execute()
         return jsonify(logs.data)
     except Exception as e:
         return jsonify([])
 
+# [DIUPDATE] Route Register sekarang mereturn Template Sukses yang cantik
 @app.route('/api/register', methods=['POST'])
 def register_card():
     uid = request.form.get('uid').upper()
@@ -185,12 +239,10 @@ def register_card():
     data = {"uid": uid, "nama": nama}
     try:
         supabase.table("users").upsert(data).execute()
-        return f"""
-        <script>
-            alert('Sukses! Kartu {nama} ({uid}) berhasil didaftarkan.');
-            window.location.href = '/';
-        </script>
-        """
+        
+        # Mengembalikan Template HTML Sukses, bukan script alert biasa
+        return render_template_string(SUCCESS_TEMPLATE, nama=nama, uid=uid)
+        
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -206,19 +258,16 @@ def cek_akses():
     data = request.json
     uid_kartu = data.get('uid')
     
-    # Update temp_scan
     try:
         supabase.table("temp_scan").update({"uid": uid_kartu, "waktu": datetime.datetime.now().isoformat()}).eq("id", 1).execute()
     except Exception as e:
         print("Error update temp scan:", e)
 
-    # Cek user
     user_query = supabase.table("users").select("nama").eq("uid", uid_kartu).execute()
     
     if not user_query.data:
         return jsonify({"akses": False, "pesan": "Tidak Terdaftar"}), 403
 
-    # Logika Masuk/Keluar
     nama_user = user_query.data[0]['nama']
     log_query = supabase.table("logs").select("status").eq("uid", uid_kartu).order("id", desc=True).limit(1).execute()
     
@@ -226,7 +275,6 @@ def cek_akses():
     if log_query.data and log_query.data[0]['status'] == "Masuk":
         status_baru = "Keluar"
 
-    # Simpan Log
     log_data = {"uid": uid_kartu, "nama": nama_user, "status": status_baru, "waktu": datetime.datetime.now().isoformat()}
     supabase.table("logs").insert(log_data).execute()
 
