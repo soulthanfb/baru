@@ -240,7 +240,7 @@ DASHBOARD_TEMPLATE = """
     </main>
 
     <footer class="max-w-7xl mx-auto px-4 py-6 text-center text-sm text-gray-400">
-        &copy; 2026 Admin Dashboard System. Created with Python Flask & Tailwind. Developed by Soulthan and Team
+        &copy; 2026 Admin Dashboard System. Created with Python Flask & Tailwind. Developed by Team 10
     </footer>
 
     <script>
@@ -476,5 +476,6 @@ def register_card():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
+
 
 
