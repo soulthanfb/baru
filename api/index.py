@@ -201,7 +201,7 @@ DASHBOARD_TEMPLATE = """
                             </div>
                             <div>
                                 <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Nama Pemilik</label>
-                                <input type="text" name="nama" placeholder="Contoh: Sultan Ihsan" 
+                                <input type="text" name="nama" placeholder="Contoh: Soulthan" 
                                     class="w-full bg-white border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5" required>
                             </div>
                             <button type="submit" class="w-full text-white bg-blue-600 hover:bg-blue-700 focus:ring-4 focus:ring-blue-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center flex justify-center items-center gap-2 transition">
@@ -476,3 +476,4 @@ def register_card():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
+
