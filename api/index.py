@@ -6,22 +6,28 @@ import datetime
 app = Flask(__name__)
 
 # --- KONFIGURASI PENTING ---
-app.secret_key = "rahasia_negara_super_aman" # Ganti dengan kunci acak untuk keamanan Session
-MASTER_KEY = "admin123" # <--- KODE RAHASIA UNTUK RESET PASSWORD (Simpan baik-baik!)
+app.secret_key = "rahasia_negara_super_aman" 
+MASTER_KEY = "admin123" 
 
 # --- KONFIGURASI SUPABASE ---
 SUPABASE_URL = "https://lmcxzdumzyvgobjpqopr.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxtY3h6ZHVtenl2Z29ianBxb3ByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU5NTM0MjIsImV4cCI6MjA4MTUyOTQyMn0.9F3aqni686QeiLE3z3NtpOBfyIkLVjI93gaA3ejYwOw" 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# --- VARIABEL HEARTBEAT ---
+# --- VARIABEL STATE (JEMBATAN ARDUINO & WEB) ---
 last_heartbeat_time = None
+
+# Variable ini menyimpan status apakah alat boleh aktif atau tidak
+# Default: False (Terkunci)
+DEVICE_STATE = {
+    "active": False,
+    "operator": ""
+}
 
 # ==========================================
 #  BAGIAN DESAIN HTML (CSS & TEMPLATE)
 # ==========================================
 
-# CSS Global (Dipakai di semua halaman)
 COMMON_STYLE = """
 <style>
     body { font-family: 'Poppins', sans-serif; background: linear-gradient(120deg, #84fab0 0%, #8fd3f4 100%); min-height: 100vh; margin: 0; display: flex; align-items: center; justify-content: center; color: #444; }
@@ -40,7 +46,6 @@ COMMON_STYLE = """
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
 """
 
-# Template Login / Register / Reset
 AUTH_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="id">
@@ -80,7 +85,7 @@ AUTH_TEMPLATE = """
             {% if mode == 'login' %}
                 <a href="/register">Buat Akun</a> | <a href="/reset">Lupa Password?</a>
             {% elif mode == 'register' %}
-                Sudah punya akun? <a href="/login">Login disini</a>
+                Already have account? <a href="/login">Login</a>
             {% else %}
                 <a href="/login">Kembali ke Login</a>
             {% endif %}
@@ -90,7 +95,6 @@ AUTH_TEMPLATE = """
 </html>
 """
 
-# Template Dashboard Utama (Hanya bisa diakses jika Login)
 DASHBOARD_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="id">
@@ -104,13 +108,11 @@ DASHBOARD_TEMPLATE = """
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
         .logout-btn { background: #ff4757; color: white; text-decoration: none; padding: 8px 15px; border-radius: 5px; font-size: 14px; }
         
-        /* Status Bar */
         .status-bar { background: #f8f9fa; padding: 10px 20px; border-radius: 50px; display: inline-flex; align-items: center; gap: 10px; font-weight: 600; font-size: 14px; margin-bottom: 20px; }
         .status-indicator { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
         .st-offline { background-color: #ff4757; box-shadow: 0 0 8px #ff4757; }
         .st-online { background-color: #2ed573; box-shadow: 0 0 8px #2ed573; }
 
-        /* Tabel & Layout */
         .container-grid { display: grid; grid-template-columns: 1fr; gap: 30px; text-align: left; }
         .form-section { border-bottom: 1px dashed #ccc; padding-bottom: 20px; }
         table { width: 100%; border-collapse: collapse; margin-top: 10px; }
@@ -134,6 +136,10 @@ DASHBOARD_TEMPLATE = """
             <div class="status-bar">
                 <span id="statusDot" class="status-indicator st-offline"></span>
                 <span id="statusText">Menunggu WiFi...</span>
+            </div>
+            <div class="status-bar">
+                <span class="status-indicator st-online"></span>
+                <span style="color:#2ed573">Mode Kontrol: AKTIF (Unlock)</span>
             </div>
         </div>
 
@@ -212,7 +218,6 @@ DASHBOARD_TEMPLATE = """
 </html>
 """
 
-# Template Sukses Register Kartu
 SUCCESS_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -236,14 +241,17 @@ def login():
         username = request.form['username']
         password = request.form['password']
         
-        # Cek user di Supabase
         user_data = supabase.table("admins").select("*").eq("username", username).execute()
         
         if user_data.data:
             user = user_data.data[0]
-            # Cek Password Hash
             if check_password_hash(user['password'], password):
                 session['user'] = username
+                
+                # --- [PENTING] AKTIFKAN ALAT KARENA SUDAH LOGIN ---
+                DEVICE_STATE["active"] = True
+                DEVICE_STATE["operator"] = username
+                
                 return redirect('/')
             else:
                 flash('Password salah!', 'error')
@@ -258,12 +266,10 @@ def register():
         username = request.form['username']
         password = request.form['password']
         
-        # Cek apakah username sudah ada
         cek_user = supabase.table("admins").select("username").eq("username", username).execute()
         if cek_user.data:
             flash('Username sudah dipakai, pilih yang lain.', 'error')
         else:
-            # Hash password sebelum simpan ke DB
             hashed_pw = generate_password_hash(password)
             supabase.table("admins").insert({"username": username, "password": hashed_pw}).execute()
             flash('Akun berhasil dibuat! Silakan login.', 'success')
@@ -278,16 +284,14 @@ def reset():
         master_key = request.form['master_key']
         new_password = request.form['password']
         
-        # Validasi Master Key
         if master_key != MASTER_KEY:
-            flash('Master Key salah! Anda tidak berhak mereset.', 'error')
+            flash('Master Key salah!', 'error')
         else:
             cek_user = supabase.table("admins").select("id").eq("username", username).execute()
             if cek_user.data:
-                # Update password baru
                 new_hash = generate_password_hash(new_password)
                 supabase.table("admins").update({"password": new_hash}).eq("username", username).execute()
-                flash('Password berhasil direset! Silakan login.', 'success')
+                flash('Password berhasil direset!', 'success')
                 return redirect('/login')
             else:
                 flash('Username tidak ditemukan.', 'error')
@@ -297,6 +301,11 @@ def reset():
 @app.route('/logout')
 def logout():
     session.pop('user', None)
+    
+    # --- [PENTING] NON-AKTIFKAN ALAT SAAT LOGOUT ---
+    DEVICE_STATE["active"] = False
+    DEVICE_STATE["operator"] = ""
+    
     return redirect('/login')
 
 # ==========================================
@@ -309,7 +318,19 @@ def home():
         return redirect('/login')
     return render_template_string(DASHBOARD_TEMPLATE, username=session['user'])
 
-# --- API HEARTBEAT & LOGIC LAINNYA (TIDAK BERUBAH) ---
+# --- [BARU] API KHUSUS ARDUINO UNTUK CEK STATUS LOGIN ---
+@app.route('/api/device/status', methods=['GET'])
+def check_device_status():
+    if DEVICE_STATE["active"]:
+        return jsonify({
+            "status": "active",
+            "user": DEVICE_STATE["operator"]
+        })
+    else:
+        return jsonify({
+            "status": "inactive",
+            "user": None
+        })
 
 @app.route('/api/ping', methods=['GET'])
 def ping():
@@ -339,12 +360,11 @@ def api_get_logs():
 
 @app.route('/api/register', methods=['POST'])
 def register_card():
-    # Ini register KARTU (bukan register akun admin)
     uid = request.form.get('uid').upper()
     nama = request.form.get('nama')
     try:
         supabase.table("users").upsert({"uid": uid, "nama": nama}).execute()
-        if 'user' in session: # Jika request dari browser
+        if 'user' in session: 
             return render_template_string(SUCCESS_TEMPLATE, nama=nama, uid=uid)
         return "OK"
     except Exception as e: return f"Error: {str(e)}"
@@ -354,10 +374,14 @@ def cek_akses():
     global last_heartbeat_time
     last_heartbeat_time = datetime.datetime.now()
     
+    # --- [TAMBAHAN KEAMANAN] ---
+    # Jika device tidak aktif (belum login), tolak request scan
+    if not DEVICE_STATE["active"]:
+        return jsonify({"akses": False, "pesan": "Device Locked"}), 403
+
     data = request.json
     uid = data.get('uid')
     
-    # Update temp scan
     try: supabase.table("temp_scan").update({"uid": uid, "waktu": datetime.datetime.now().isoformat()}).eq("id", 1).execute()
     except: pass
     
