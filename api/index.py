@@ -1,8 +1,13 @@
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template_string, session, redirect, url_for, flash
 from supabase import create_client
+from werkzeug.security import generate_password_hash, check_password_hash
 import datetime
 
 app = Flask(__name__)
+
+# --- KONFIGURASI PENTING ---
+app.secret_key = "rahasia_negara_super_aman" # Ganti dengan kunci acak untuk keamanan Session
+MASTER_KEY = "admin123" # <--- KODE RAHASIA UNTUK RESET PASSWORD (Simpan baik-baik!)
 
 # --- KONFIGURASI SUPABASE ---
 SUPABASE_URL = "https://lmcxzdumzyvgobjpqopr.supabase.co"
@@ -10,201 +15,320 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- VARIABEL HEARTBEAT ---
-# Menyimpan waktu terakhir Arduino lapor diri
 last_heartbeat_time = None
 
-# --- TEMPLATE HTML (Sama seperti sebelumnya) ---
-HTML_TEMPLATE = """
+# ==========================================
+#  BAGIAN DESAIN HTML (CSS & TEMPLATE)
+# ==========================================
+
+# CSS Global (Dipakai di semua halaman)
+COMMON_STYLE = """
+<style>
+    body { font-family: 'Poppins', sans-serif; background: linear-gradient(120deg, #84fab0 0%, #8fd3f4 100%); min-height: 100vh; margin: 0; display: flex; align-items: center; justify-content: center; color: #444; }
+    .card { background: white; padding: 40px; border-radius: 20px; box-shadow: 0 15px 35px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
+    h2 { color: #333; margin-bottom: 20px; }
+    input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; }
+    button { width: 100%; padding: 12px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; margin-top: 10px; transition: 0.3s; }
+    .btn-primary { background: #00c6ff; color: white; background: linear-gradient(to right, #00c6ff, #0072ff); }
+    .btn-primary:hover { transform: scale(1.02); }
+    .btn-secondary { background: #f0f0f0; color: #555; margin-top: 10px; display: inline-block; text-decoration: none; padding: 10px 20px; border-radius: 8px; font-size: 14px; }
+    .alert { padding: 10px; background: #ffcccc; color: #cc0000; border-radius: 5px; margin-bottom: 15px; font-size: 14px; }
+    .success { background: #d4edda; color: #155724; }
+    .links { margin-top: 20px; font-size: 14px; }
+    .links a { color: #0072ff; text-decoration: none; margin: 0 5px; }
+</style>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+"""
+
+# Template Login / Register / Reset
+AUTH_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Sistem Garasi Pintar</title>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+    <title>{{ title }}</title>
+    """ + COMMON_STYLE + """
+</head>
+<body>
+    <div class="card">
+        <h2>{{ title }}</h2>
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert {{ category }}">{{ message }}</div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+
+        <form method="POST">
+            <input type="text" name="username" placeholder="Username" required>
+            
+            {% if mode == 'reset' %}
+                <input type="text" name="master_key" placeholder="Masukkan Master Key" required>
+            {% endif %}
+
+            <input type="password" name="password" placeholder="{% if mode == 'reset' %}Password Baru{% else %}Password{% endif %}" required>
+            
+            <button type="submit" class="btn-primary">
+                {% if mode == 'login' %} MASUK {% elif mode == 'register' %} DAFTAR {% else %} UBAH PASSWORD {% endif %}
+            </button>
+        </form>
+
+        <div class="links">
+            {% if mode == 'login' %}
+                <a href="/register">Buat Akun</a> | <a href="/reset">Lupa Password?</a>
+            {% elif mode == 'register' %}
+                Sudah punya akun? <a href="/login">Login disini</a>
+            {% else %}
+                <a href="/login">Kembali ke Login</a>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+# Template Dashboard Utama (Hanya bisa diakses jika Login)
+DASHBOARD_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Dashboard Garasi</title>
+    """ + COMMON_STYLE + """
     <style>
-        body { font-family: 'Poppins', sans-serif; background: linear-gradient(120deg, #84fab0 0%, #8fd3f4 100%); min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 40px 20px; margin: 0; color: #444; }
+        .card { max-width: 900px; padding: 30px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .logout-btn { background: #ff4757; color: white; text-decoration: none; padding: 8px 15px; border-radius: 5px; font-size: 14px; }
         
         /* Status Bar */
-        .status-bar { background: white; padding: 10px 25px; border-radius: 50px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 10px; margin-bottom: 20px; font-weight: 600; font-size: 14px; transition: all 0.3s ease; }
-        .status-indicator { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
-        .st-offline { background-color: #ff4757; box-shadow: 0 0 10px #ff4757; }
-        .st-online { background-color: #2ed573; box-shadow: 0 0 10px #2ed573; }
+        .status-bar { background: #f8f9fa; padding: 10px 20px; border-radius: 50px; display: inline-flex; align-items: center; gap: 10px; font-weight: 600; font-size: 14px; margin-bottom: 20px; }
+        .status-indicator { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+        .st-offline { background-color: #ff4757; box-shadow: 0 0 8px #ff4757; }
+        .st-online { background-color: #2ed573; box-shadow: 0 0 8px #2ed573; }
 
-        .main-container { background: rgba(255, 255, 255, 0.95); padding: 40px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1); width: 100%; max-width: 900px; display: grid; grid-template-columns: 1fr; gap: 40px; }
-        .form-section { border-bottom: 2px dashed #e0e0e0; padding-bottom: 30px; margin-bottom: 10px; }
-        .scan-box { background: #e3f2fd; border: 2px solid #bbdefb; color: #1976d2; padding: 15px; border-radius: 10px; text-align: center; font-size: 14px; margin-bottom: 25px; }
+        /* Tabel & Layout */
+        .container-grid { display: grid; grid-template-columns: 1fr; gap: 30px; text-align: left; }
+        .form-section { border-bottom: 1px dashed #ccc; padding-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 12px; border-bottom: 1px solid #eee; }
+        th { background: #f1f1f1; color: #555; }
+        .badge { padding: 4px 10px; border-radius: 20px; color: white; font-size: 12px; }
+        .bg-green { background: #28a745; } .bg-red { background: #dc3545; }
         
-        label { font-weight: 600; color: #555; display: block; margin-bottom: 8px; font-size: 14px; }
-        input[type="text"] { width: 100%; padding: 15px; margin-bottom: 20px; border: 2px solid #eee; border-radius: 12px; font-size: 16px; box-sizing: border-box; }
-        input[readonly] { background-color: #f9f9f9; color: #888; cursor: not-allowed; }
-        button { width: 100%; padding: 15px; background: linear-gradient(to right, #43e97b 0%, #38f9d7 100%); color: white; border: none; border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer; }
-        
-        .table-wrapper { overflow-x: auto; border-radius: 12px; border: 1px solid #eee; }
-        table { width: 100%; border-collapse: collapse; background: white; }
-        th, td { padding: 15px; text-align: left; border-bottom: 1px solid #f0f0f0; }
-        th { background-color: #f8f9fa; color: #666; font-size: 13px; text-transform: uppercase; font-weight: 600; }
-        .badge { padding: 6px 12px; border-radius: 50px; color: white; font-size: 12px; font-weight: 600; }
-        .bg-green { background-color: #00c853; } .bg-red { background-color: #ff3d00; }
-        .loading { text-align: center; color: #999; font-style: italic; padding: 20px; }
-        
-        h2 { margin: 0 0 20px 0; color: #333; font-weight: 600; text-align: center; }
-        @media (min-width: 768px) {
-            .main-container { grid-template-columns: 1fr 1.5fr; align-items: start; }
-            .form-section { border-bottom: none; border-right: 2px dashed #e0e0e0; padding-bottom: 0; padding-right: 30px; margin-bottom: 0; }
-            h2 { text-align: left; }
-        }
+        @media (min-width: 768px) { .container-grid { grid-template-columns: 1fr 1.5fr; border-bottom: none; } .form-section { border-bottom: none; border-right: 1px dashed #ccc; padding-right: 30px; } }
     </style>
 </head>
 <body>
 
-    <div class="status-bar">
-        <span id="statusDot" class="status-indicator st-offline"></span>
-        <span id="statusText">Menunggu Koneksi WiFi...</span>
-    </div>
-
-    <div class="main-container">
-        <div class="form-section">
-            <h2>Kartu Baru</h2>
-            <div class="scan-box">📡 Tempelkan kartu pada alat reader</div>
-            <form action="/api/register" method="POST">
-                <label>UID Kartu</label>
-                <input type="text" id="uidField" name="uid" placeholder="Menunggu scan..." required readonly>
-                <label>Nama Pemilik</label>
-                <input type="text" name="nama" placeholder="Contoh: Budi Santoso" required>
-                <button type="submit">Simpan Data</button>
-            </form>
+    <div class="card">
+        <div class="header">
+            <h3>Hi, {{ username }}! 👋</h3>
+            <a href="/logout" class="logout-btn">Keluar</a>
         </div>
 
-        <div class="log-section">
-            <h2>Riwayat Akses</h2>
-            <div class="table-wrapper">
-                <table>
-                    <thead><tr><th>Waktu</th><th>Nama / UID</th><th>Status</th></tr></thead>
-                    <tbody id="logTableBody"><tr><td colspan="3" class="loading">Memuat data log...</td></tr></tbody>
-                </table>
+        <div style="text-align: left;">
+            <div class="status-bar">
+                <span id="statusDot" class="status-indicator st-offline"></span>
+                <span id="statusText">Menunggu WiFi...</span>
+            </div>
+        </div>
+
+        <div class="container-grid">
+            <div class="form-section">
+                <h4>Tambah Kartu Baru</h4>
+                <div style="background:#e3f2fd; color:#0d47a1; padding:10px; border-radius:8px; font-size:13px; margin-bottom:15px;">
+                    📡 Tempelkan kartu di alat, UID otomatis muncul.
+                </div>
+                <form action="/api/register" method="POST">
+                    <label>UID Kartu</label>
+                    <input type="text" id="uidField" name="uid" placeholder="Menunggu scan..." required readonly>
+                    <label>Nama Pemilik</label>
+                    <input type="text" name="nama" placeholder="Contoh: Budi" required>
+                    <button type="submit" class="btn-primary">Simpan Data</button>
+                </form>
+            </div>
+
+            <div>
+                <h4>Riwayat Akses</h4>
+                <div style="overflow-x:auto;">
+                    <table>
+                        <thead><tr><th>Waktu</th><th>Nama / UID</th><th>Status</th></tr></thead>
+                        <tbody id="logTableBody"><tr><td colspan="3" style="text-align:center;">Memuat...</td></tr></tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
 
     <script>
-        // LOGIKA STATUS ONLINE/OFFLINE
-        async function checkSystemStatus() {
+        async function updateStatus() {
             try {
-                const response = await fetch('/api/status-alat');
-                const data = await response.json();
-                
-                const statusDot = document.getElementById('statusDot');
-                const statusText = document.getElementById('statusText');
-                
-                if (data.status === "ONLINE") {
-                    statusDot.className = "status-indicator st-online";
-                    statusText.innerText = "Alat Online (WiFi Terhubung)";
-                    statusText.style.color = "#2ed573";
+                let res = await fetch('/api/status-alat');
+                let data = await res.json();
+                let dot = document.getElementById('statusDot');
+                let text = document.getElementById('statusText');
+                if(data.status === 'ONLINE'){
+                    dot.className = 'status-indicator st-online'; text.innerText = 'Alat Terhubung'; text.style.color = '#2ed573';
                 } else {
-                    statusDot.className = "status-indicator st-offline";
-                    statusText.innerText = "Alat Offline / Mati";
-                    statusText.style.color = "#ff4757";
+                    dot.className = 'status-indicator st-offline'; text.innerText = 'Alat Offline'; text.style.color = '#ff4757';
                 }
-            } catch (error) { console.error("Gagal cek status:", error); }
+            } catch(e){}
         }
-
-        async function checkLatestScan() {
+        async function cekScan() {
             try {
-                const response = await fetch('/api/last-scan');
-                const data = await response.json();
-                const inputField = document.getElementById('uidField');
-                if (data.uid && data.uid !== "BELUM ADA") {
-                    if(inputField.value !== data.uid) {
-                        inputField.value = data.uid;
-                        inputField.style.borderColor = "#43e97b"; inputField.style.backgroundColor = "#e8f5e9";
-                        setTimeout(() => { inputField.style.borderColor = "#eee"; inputField.style.backgroundColor = "#f9f9f9"; }, 1000);
-                    }
+                let res = await fetch('/api/last-scan');
+                let data = await res.json();
+                let input = document.getElementById('uidField');
+                if(data.uid && data.uid !== "BELUM ADA" && input.value !== data.uid){
+                    input.value = data.uid;
+                    input.style.background = "#d4edda";
+                    setTimeout(() => input.style.background = "#fff", 1000);
                 }
-            } catch (error) { }
+            } catch(e){}
         }
-
-        async function refreshLogs() {
+        async function loadLogs() {
             try {
-                const response = await fetch('/api/get-logs'); 
-                const logs = await response.json();
-                const tableBody = document.getElementById('logTableBody');
-                if (logs.length === 0) { tableBody.innerHTML = '<tr><td colspan="3" class="loading">Belum ada riwayat</td></tr>'; return; }
-                let htmlContent = '';
-                logs.forEach(log => {
-                    let cleanTime = log.waktu.replace('T', ' ').substring(0, 19);
-                    let badgeClass = (log.status === 'Masuk') ? 'bg-green' : 'bg-red';
-                    htmlContent += `<tr><td style="font-size:13px;color:#666;">${cleanTime}</td><td><div><b>${log.nama}</b></div><div style="font-size:11px;color:#999;">${log.uid}</div></td><td><span class="badge ${badgeClass}">${log.status}</span></td></tr>`;
+                let res = await fetch('/api/get-logs');
+                let logs = await res.json();
+                let html = '';
+                logs.forEach(l => {
+                   let time = l.waktu.replace('T', ' ').substring(0,19);
+                   let badge = l.status == 'Masuk' ? 'bg-green' : 'bg-red';
+                   html += `<tr><td><small>${time}</small></td><td><b>${l.nama}</b><br><small>${l.uid}</small></td><td><span class="badge ${badge}">${l.status}</span></td></tr>`;
                 });
-                tableBody.innerHTML = htmlContent;
-            } catch (error) { }
+                document.getElementById('logTableBody').innerHTML = html;
+            } catch(e){}
         }
-
-        setInterval(checkSystemStatus, 2000); // Cek status tiap 2 detik
-        setInterval(checkLatestScan, 1500); 
-        setInterval(refreshLogs, 2000);     
-        refreshLogs();
+        setInterval(updateStatus, 2000);
+        setInterval(cekScan, 1500);
+        setInterval(loadLogs, 2000);
+        loadLogs();
     </script>
 </body>
 </html>
 """
 
-# --- TEMPLATE SUKSES ---
+# Template Sukses Register Kartu
 SUCCESS_TEMPLATE = """
 <!DOCTYPE html>
-<html lang="id">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Berhasil</title>
-    <style>
-        body { font-family: 'Segoe UI', sans-serif; background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); height: 100vh; margin: 0; display: flex; justify-content: center; align-items: center; }
-        .card { background: white; padding: 40px; border-radius: 25px; box-shadow: 0 20px 50px rgba(0,0,0,0.1); text-align: center; width: 90%; max-width: 380px; animation: popIn 0.5s ease; }
-        .btn { background: #009688; color: white; text-decoration: none; padding: 12px 30px; border-radius: 50px; display: inline-block; margin-top: 20px; }
-        @keyframes popIn { 0% { transform: scale(0.5); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
-    </style>
-</head>
-<body>
-    <div class="card">
-        <h1 style="color:#009688;">✔ Sukses!</h1>
-        <p>Kartu <b>{{ nama }}</b><br>({{ uid }})<br>berhasil disimpan.</p>
-        <a href="/" class="btn">OK</a>
+<html>
+<body style="display:flex;justify-content:center;align-items:center;height:100vh;background:#e0f7fa;font-family:sans-serif;">
+    <div style="background:white;padding:40px;border-radius:20px;text-align:center;box-shadow:0 10px 25px rgba(0,0,0,0.1);">
+        <h1 style="color:#00c853;">✔ Berhasil!</h1>
+        <p>Kartu <b>{{ nama }}</b> ({{ uid }}) tersimpan.</p>
+        <a href="/" style="background:#00c853;color:white;padding:10px 30px;text-decoration:none;border-radius:50px;">OK</a>
     </div>
 </body>
 </html>
 """
 
-# --- ROUTES ---
+# ==========================================
+#  ROUTES AUTH (LOGIN / REGISTER / RESET)
+# ==========================================
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        
+        # Cek user di Supabase
+        user_data = supabase.table("admins").select("*").eq("username", username).execute()
+        
+        if user_data.data:
+            user = user_data.data[0]
+            # Cek Password Hash
+            if check_password_hash(user['password'], password):
+                session['user'] = username
+                return redirect('/')
+            else:
+                flash('Password salah!', 'error')
+        else:
+            flash('Username tidak ditemukan!', 'error')
+
+    return render_template_string(AUTH_TEMPLATE, title="Login Admin", mode="login")
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        
+        # Cek apakah username sudah ada
+        cek_user = supabase.table("admins").select("username").eq("username", username).execute()
+        if cek_user.data:
+            flash('Username sudah dipakai, pilih yang lain.', 'error')
+        else:
+            # Hash password sebelum simpan ke DB
+            hashed_pw = generate_password_hash(password)
+            supabase.table("admins").insert({"username": username, "password": hashed_pw}).execute()
+            flash('Akun berhasil dibuat! Silakan login.', 'success')
+            return redirect('/login')
+
+    return render_template_string(AUTH_TEMPLATE, title="Daftar Admin Baru", mode="register")
+
+@app.route('/reset', methods=['GET', 'POST'])
+def reset():
+    if request.method == 'POST':
+        username = request.form['username']
+        master_key = request.form['master_key']
+        new_password = request.form['password']
+        
+        # Validasi Master Key
+        if master_key != MASTER_KEY:
+            flash('Master Key salah! Anda tidak berhak mereset.', 'error')
+        else:
+            cek_user = supabase.table("admins").select("id").eq("username", username).execute()
+            if cek_user.data:
+                # Update password baru
+                new_hash = generate_password_hash(new_password)
+                supabase.table("admins").update({"password": new_hash}).eq("username", username).execute()
+                flash('Password berhasil direset! Silakan login.', 'success')
+                return redirect('/login')
+            else:
+                flash('Username tidak ditemukan.', 'error')
+
+    return render_template_string(AUTH_TEMPLATE, title="Reset Password", mode="reset")
+
+@app.route('/logout')
+def logout():
+    session.pop('user', None)
+    return redirect('/login')
+
+# ==========================================
+#  ROUTES UTAMA & API ARDUINO
+# ==========================================
 
 @app.route('/')
 def home():
-    return render_template_string(HTML_TEMPLATE)
+    if 'user' not in session:
+        return redirect('/login')
+    return render_template_string(DASHBOARD_TEMPLATE, username=session['user'])
 
-# [PENTING] Endpoint Heartbeat: Dipanggil Arduino setiap 5 detik
-@app.route('/api/ping', methods=['GET', 'POST'])
+# --- API HEARTBEAT & LOGIC LAINNYA (TIDAK BERUBAH) ---
+
+@app.route('/api/ping', methods=['GET'])
 def ping():
     global last_heartbeat_time
-    # Update waktu terakhir alat "melapor"
     last_heartbeat_time = datetime.datetime.now()
-    return jsonify({"message": "pong", "server_time": last_heartbeat_time.isoformat()})
+    return jsonify({"msg": "pong"})
 
-# Endpoint Status: Mengecek apakah alat masih hidup
 @app.route('/api/status-alat', methods=['GET'])
 def get_status_alat():
     global last_heartbeat_time
-    
-    if last_heartbeat_time is None:
-        return jsonify({"status": "OFFLINE"})
-    
-    # Hitung selisih waktu sekarang dengan heartbeat terakhir
-    now = datetime.datetime.now()
-    selisih = (now - last_heartbeat_time).total_seconds()
-    
-    # Jika sudah lebih dari 10 detik tidak ada kabar, anggap OFFLINE
-    if selisih > 10:
-        return jsonify({"status": "OFFLINE"})
-    else:
-        return jsonify({"status": "ONLINE"})
+    if last_heartbeat_time is None: return jsonify({"status": "OFFLINE"})
+    delta = (datetime.datetime.now() - last_heartbeat_time).total_seconds()
+    return jsonify({"status": "ONLINE" if delta < 10 else "OFFLINE"})
+
+@app.route('/api/last-scan', methods=['GET'])
+def get_last_scan():
+    scan = supabase.table("temp_scan").select("*").eq("id", 1).execute()
+    if scan.data: return jsonify(scan.data[0])
+    return jsonify({"uid": "BELUM ADA"})
 
 @app.route('/api/get-logs', methods=['GET'])
 def api_get_logs():
@@ -215,43 +339,37 @@ def api_get_logs():
 
 @app.route('/api/register', methods=['POST'])
 def register_card():
+    # Ini register KARTU (bukan register akun admin)
     uid = request.form.get('uid').upper()
     nama = request.form.get('nama')
-    data = {"uid": uid, "nama": nama}
     try:
-        supabase.table("users").upsert(data).execute()
-        return render_template_string(SUCCESS_TEMPLATE, nama=nama, uid=uid)
+        supabase.table("users").upsert({"uid": uid, "nama": nama}).execute()
+        if 'user' in session: # Jika request dari browser
+            return render_template_string(SUCCESS_TEMPLATE, nama=nama, uid=uid)
+        return "OK"
     except Exception as e: return f"Error: {str(e)}"
-
-@app.route('/api/last-scan', methods=['GET'])
-def get_last_scan():
-    scan = supabase.table("temp_scan").select("*").eq("id", 1).execute()
-    if scan.data: return jsonify(scan.data[0])
-    return jsonify({"uid": "BELUM ADA"})
 
 @app.route('/api/akses', methods=['POST'])
 def cek_akses():
-    # Update heartbeat juga saat ada akses, biar status tetap online
     global last_heartbeat_time
     last_heartbeat_time = datetime.datetime.now()
-
+    
     data = request.json
-    uid_kartu = data.get('uid')
-    try: supabase.table("temp_scan").update({"uid": uid_kartu, "waktu": datetime.datetime.now().isoformat()}).eq("id", 1).execute()
+    uid = data.get('uid')
+    
+    # Update temp scan
+    try: supabase.table("temp_scan").update({"uid": uid, "waktu": datetime.datetime.now().isoformat()}).eq("id", 1).execute()
     except: pass
-
-    user_query = supabase.table("users").select("nama").eq("uid", uid_kartu).execute()
-    if not user_query.data: return jsonify({"akses": False, "pesan": "Tidak Terdaftar"}), 403
-
-    nama_user = user_query.data[0]['nama']
-    log_query = supabase.table("logs").select("status").eq("uid", uid_kartu).order("id", desc=True).limit(1).execute()
-    status_baru = "Masuk"
-    if log_query.data and log_query.data[0]['status'] == "Masuk": status_baru = "Keluar"
-
-    log_data = {"uid": uid_kartu, "nama": nama_user, "status": status_baru, "waktu": datetime.datetime.now().isoformat()}
-    supabase.table("logs").insert(log_data).execute()
-    return jsonify({"akses": True, "nama": nama_user, "status": status_baru}), 200
+    
+    user = supabase.table("users").select("nama").eq("uid", uid).execute()
+    if not user.data: return jsonify({"akses": False}), 403
+    
+    nama = user.data[0]['nama']
+    log = supabase.table("logs").select("status").eq("uid", uid).order("id", desc=True).limit(1).execute()
+    status = "Keluar" if (log.data and log.data[0]['status'] == "Masuk") else "Masuk"
+    
+    supabase.table("logs").insert({"uid": uid, "nama": nama, "status": status, "waktu": datetime.datetime.now().isoformat()}).execute()
+    return jsonify({"akses": True, "nama": nama, "status": status}), 200
 
 if __name__ == '__main__':
-    # Pastikan host='0.0.0.0' agar bisa diakses dari perangkat lain (Arduino)
     app.run(host='0.0.0.0', port=5000, debug=True)
